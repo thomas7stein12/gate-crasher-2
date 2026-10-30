@@ -56,6 +56,7 @@ const state = {
   gatesRemaining: GATES_PER_LEVEL,
   gatesPassed: 0,
   bestLevel: 0,
+  trailFlow: 0,
 
   playerAngle: 0, // 0 = bottom of the tube, positive = clockwise
   angularVel: 0,
@@ -63,6 +64,7 @@ const state = {
   gates: [], // { z, start, span, color }
   particles: [],
   ambient: [],
+  playerTrail: [], // recent player positions for the comet trail
 
   scroll: 0, // tube ring scroll offset
   spawnTimer: 0,
@@ -491,52 +493,256 @@ function drawPlayer() {
   const p = project(state.playerAngle, PLAYER_Z);
   const scale = p.r / R0;
 
-  // Rotation trail along the tube wall
-  if (Math.abs(state.angularVel) > 0.25) {
-    const dir = Math.sign(state.angularVel);
-    c.save();
-    c.strokeStyle = COLORS.player;
-    c.lineCap = "round";
-    const segments = 7;
-    for (let i = 0; i < segments; i++) {
-      const a = state.playerAngle - dir * (0.06 + i * 0.065);
-      const seg = project(a, PLAYER_Z + 0.02 + i * 0.05);
-      c.globalAlpha = 0.32 * (1 - i / segments);
-      c.lineWidth = 6 * (seg.r / R0);
-      c.beginPath();
-      const a2 = a + dir * 0.045;
-      const p2 = project(a2, PLAYER_Z + 0.02 + i * 0.05);
-      c.moveTo(seg.x, seg.y);
-      c.lineTo(p2.x, p2.y);
-      c.stroke();
-    }
-    c.restore();
+  // Direction from the center of the tunnel toward the player
+  const radialX = Math.sin(state.playerAngle);
+  const radialY = Math.cos(state.playerAngle);
+
+  // Perpendicular direction for the flowing movement
+  const tangentX = Math.cos(state.playerAngle);
+  const tangentY = -Math.sin(state.playerAngle);
+
+  // Find the nearest edge of the screen
+  let edgeDistance = Infinity;
+
+  if (radialX > 0.0001) {
+    edgeDistance = Math.min(edgeDistance, (W - p.x) / radialX);
+  } else if (radialX < -0.0001) {
+    edgeDistance = Math.min(edgeDistance, -p.x / radialX);
   }
 
-  // Hull — foreshortened triangle pointing at the vanishing point,
-  // drawn as a glowing radial beam from the wall toward the center
-  const beamLength = 42 * scale;
-  const beamWidth = Math.max(6, 11 * scale);
-  const inwardX = CX + (p.r - beamLength) * Math.sin(state.playerAngle);
-  const inwardY = CY + (p.r - beamLength) * Math.cos(state.playerAngle);
+  if (radialY > 0.0001) {
+    edgeDistance = Math.min(edgeDistance, (H - p.y) / radialY);
+  } else if (radialY < -0.0001) {
+    edgeDistance = Math.min(edgeDistance, -p.y / radialY);
+  }
+
+  // Extend beyond the screen so the trail doesn't end visibly
+  const trailLength = edgeDistance + 100;
+
+  // --------------------------------------------------
+  // Create a flowing, animated trail path
+  // --------------------------------------------------
+
+  const segments = 96;
+  const points = [];
+
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+
+    // Position along the tunnel's forward direction
+    const distance = trailLength * t;
+
+    // Two overlapping waves create more organic movement
+    const wave =
+      Math.sin(t * 8.5 - state.trailFlow * 2.6) * 3.0 +
+      Math.sin(t * 17 - state.trailFlow * 4.1) * 0.9;
+
+    // Keep the wave anchored at the player
+    // and allow it to become more noticeable farther away
+    const envelope = Math.sin(t * Math.PI * 0.75) * 0.65 + t * 0.3;
+
+    const movementAmount = clamp(
+      Math.abs(state.angularVel) / MAX_ANGULAR_SPEED,
+      0,
+      1,
+    );
+
+    const drift = wave * envelope * scale * movementAmount;
+
+    points.push({
+      x: p.x + radialX * distance + tangentX * drift,
+      y: p.y + radialY * distance + tangentY * drift,
+    });
+  }
+
+  // Draw the complete curved path
+  function traceTrail() {
+    c.beginPath();
+    c.moveTo(points[0].x, points[0].y);
+
+    for (let i = 1; i < points.length; i++) {
+      c.lineTo(points[i].x, points[i].y);
+    }
+  }
+
+  // Get an interpolated position anywhere along the trail
+  function pointOnTrail(t) {
+    const position = clamp(t, 0, 1) * (points.length - 1);
+    const index = Math.min(Math.floor(position), points.length - 2);
+
+    const fraction = position - index;
+
+    return {
+      x: points[index].x + (points[index + 1].x - points[index].x) * fraction,
+      y: points[index].y + (points[index + 1].y - points[index].y) * fraction,
+    };
+  }
+
+  const endpoint = points[points.length - 1];
 
   c.save();
-  c.strokeStyle = COLORS.player;
-  c.lineWidth = beamWidth;
   c.lineCap = "round";
-  c.shadowColor = COLORS.player;
-  c.shadowBlur = 16;
-  c.beginPath();
-  c.moveTo(p.x, p.y);
-  c.lineTo(inwardX, inwardY);
+  c.lineJoin = "round";
+
+  // --------------------------------------------------
+  // Layer 1: Soft outer comet glow
+  // --------------------------------------------------
+
+  const glowGradient = c.createLinearGradient(p.x, p.y, endpoint.x, endpoint.y);
+
+  glowGradient.addColorStop(0, "rgba(255, 215, 110, 0.85)");
+  glowGradient.addColorStop(0.18, "rgba(255, 157, 40, 0.55)");
+  glowGradient.addColorStop(0.55, "rgba(255, 120, 25, 0.20)");
+  glowGradient.addColorStop(1, "rgba(255, 100, 20, 0)");
+
+  const breathing = 1;
+
+  c.globalAlpha = breathing;
+  c.strokeStyle = glowGradient;
+  c.lineWidth = 15 * scale;
+  c.shadowColor = "#ff9f32";
+  c.shadowBlur = 28;
+
+  traceTrail();
   c.stroke();
 
-  // Bright core on the wall
-  c.shadowBlur = 10;
-  c.fillStyle = COLORS.playerCore;
+  // --------------------------------------------------
+  // Layer 2: Tapered body of the comet
+  // --------------------------------------------------
+
+  // Create a ribbon that gradually gets narrower
+  // toward the far end of the trail.
+
+  const leftSide = [];
+  const rightSide = [];
+
+  for (let i = 0; i < points.length; i++) {
+    const t = i / segments;
+
+    const previous = points[Math.max(0, i - 1)];
+    const next = points[Math.min(segments, i + 1)];
+
+    const dx = next.x - previous.x;
+    const dy = next.y - previous.y;
+    const length = Math.hypot(dx, dy) || 1;
+
+    const normalX = -dy / length;
+    const normalY = dx / length;
+
+    const width = (0.65 + 3.0 * Math.pow(1 - t, 1.35)) * scale;
+
+    leftSide.push({
+      x: points[i].x + normalX * width,
+      y: points[i].y + normalY * width,
+    });
+
+    rightSide.push({
+      x: points[i].x - normalX * width,
+      y: points[i].y - normalY * width,
+    });
+  }
+
+  const bodyGradient = c.createLinearGradient(p.x, p.y, endpoint.x, endpoint.y);
+
+  bodyGradient.addColorStop(0, "rgba(255, 235, 160, 0.95)");
+  bodyGradient.addColorStop(0.25, "rgba(255, 175, 65, 0.75)");
+  bodyGradient.addColorStop(0.7, "rgba(255, 125, 30, 0.25)");
+  bodyGradient.addColorStop(1, "rgba(255, 125, 30, 0)");
+
+  c.fillStyle = bodyGradient;
+  c.shadowBlur = 12;
+  c.shadowColor = COLORS.player;
+
   c.beginPath();
-  c.arc(p.x, p.y, Math.max(3, 4.5 * scale), 0, Math.PI * 2);
+
+  c.moveTo(leftSide[0].x, leftSide[0].y);
+
+  for (let i = 1; i < leftSide.length; i++) {
+    c.lineTo(leftSide[i].x, leftSide[i].y);
+  }
+
+  for (let i = rightSide.length - 1; i >= 0; i--) {
+    c.lineTo(rightSide[i].x, rightSide[i].y);
+  }
+
+  c.closePath();
   c.fill();
+
+  // --------------------------------------------------
+  // Layer 3: Bright center of the comet
+  // --------------------------------------------------
+
+  const coreGradient = c.createLinearGradient(p.x, p.y, endpoint.x, endpoint.y);
+
+  coreGradient.addColorStop(0, "#ffffff");
+  coreGradient.addColorStop(0.12, "#fff3c4");
+  coreGradient.addColorStop(0.4, "rgba(255, 211, 120, 0.65)");
+  coreGradient.addColorStop(1, "rgba(255, 211, 120, 0)");
+
+  c.strokeStyle = coreGradient;
+  c.lineWidth = 1.5 * scale;
+  c.shadowColor = "#ffffff";
+  c.shadowBlur = 9;
+
+  traceTrail();
+  c.stroke();
+
+  // --------------------------------------------------
+  // Layer 4: Traveling energy pulses
+  // --------------------------------------------------
+
+  // These little highlights continuously travel
+  // outward from the player along the comet trail.
+
+  c.lineCap = "round";
+  c.shadowColor = "#fff5d2";
+  c.shadowBlur = 12;
+
+  for (let i = 0; i < 4; i++) {
+    const t = (state.trailFlow * 0.3 + i * 0.25) % 1;
+
+    if (t > 0.96) continue;
+
+    const start = pointOnTrail(t);
+    const end = pointOnTrail(Math.min(1, t + 0.035));
+
+    c.globalAlpha = 0.65 * (1 - t * 0.55);
+    c.strokeStyle = "#fff4cf";
+    c.lineWidth = (2.2 - t) * scale;
+
+    c.beginPath();
+    c.moveTo(start.x, start.y);
+    c.lineTo(end.x, end.y);
+    c.stroke();
+  }
+
+  // --------------------------------------------------
+  // Player itself — small vertical glowing line
+  // --------------------------------------------------
+
+  c.globalAlpha = 1;
+  c.shadowColor = COLORS.player;
+  c.shadowBlur = 18;
+  c.strokeStyle = COLORS.player;
+  c.lineWidth = 3.5 * scale;
+
+  c.beginPath();
+
+  c.moveTo(p.x - radialX * 9 * scale, p.y - radialY * 9 * scale);
+
+  c.lineTo(p.x + radialX * 5 * scale, p.y + radialY * 5 * scale);
+
+  c.stroke();
+
+  // Bright center point
+  c.fillStyle = COLORS.playerCore;
+  c.shadowColor = "#ffffff";
+  c.shadowBlur = 12;
+
+  c.beginPath();
+  c.arc(p.x, p.y, 2.8 * scale, 0, Math.PI * 2);
+  c.fill();
+
   c.restore();
 }
 
@@ -602,6 +808,8 @@ function startGame() {
   state.spawnTimer = 0.6;
   state.levelFlash = 1.4;
   state.shake = 0;
+  state.playerTrail = [];
+  state.trailFlow = 0;
   sfx.start();
 }
 
@@ -991,12 +1199,44 @@ function update(dt) {
   updateAmbient(dt, speed);
   updateParticles(dt);
 
+  // Age and remove old trail points
+  for (const point of state.playerTrail) {
+    point.age += dt;
+  }
+
+  state.playerTrail = state.playerTrail.filter((point) => point.age < 0.65);
+
   if (state.mode === "playing") {
     const dir = (steeringRight() ? 1 : 0) - (steeringLeft() ? 1 : 0);
     const targetVel = dir * MAX_ANGULAR_SPEED;
     const ease = 1 - Math.exp(-dt / ANGULAR_EASE);
     state.angularVel += (targetVel - state.angularVel) * ease;
     state.playerAngle += state.angularVel * dt;
+
+    // Advance comet animation based on actual player movement
+    state.trailFlow += Math.abs(state.angularVel) * dt;
+
+    // Record the player's recent movement
+    if (Math.abs(state.angularVel) > 0.12) {
+      const last = state.playerTrail[state.playerTrail.length - 1];
+
+      // Start a fresh trail if the player stopped moving
+      if (last && last.age > 0.12) {
+        state.playerTrail = [];
+      }
+
+      const p = project(state.playerAngle, PLAYER_Z);
+      const previous = state.playerTrail[state.playerTrail.length - 1];
+
+      // Only add a point when the player has moved enough
+      if (!previous || Math.hypot(p.x - previous.x, p.y - previous.y) > 2) {
+        state.playerTrail.push({
+          x: p.x,
+          y: p.y,
+          age: 0,
+        });
+      }
+    }
 
     updateGates(dt);
   } else if (state.mode === "menu") {

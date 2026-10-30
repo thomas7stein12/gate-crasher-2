@@ -126,7 +126,14 @@ function ensureAudio() {
   return audioContext;
 }
 
-function playTone({ type = "square", from = 520, to = 520, duration = 0.1, volume = 0.12, delay = 0 }) {
+function playTone({
+  type = "square",
+  from = 520,
+  to = 520,
+  duration = 0.1,
+  volume = 0.12,
+  delay = 0,
+}) {
   const ctx = ensureAudio();
   if (!ctx || !state.soundOn) return;
   const now = ctx.currentTime + delay;
@@ -134,7 +141,10 @@ function playTone({ type = "square", from = 520, to = 520, duration = 0.1, volum
   const gain = ctx.createGain();
   oscillator.type = type;
   oscillator.frequency.setValueAtTime(from, now);
-  oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, to), now + duration);
+  oscillator.frequency.exponentialRampToValueAtTime(
+    Math.max(1, to),
+    now + duration,
+  );
   gain.gain.setValueAtTime(volume, now);
   gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
   oscillator.connect(gain);
@@ -145,23 +155,62 @@ function playTone({ type = "square", from = 520, to = 520, duration = 0.1, volum
 
 const sfx = {
   pass() {
-    playTone({ type: "square", from: 660, to: 880, duration: 0.06, volume: 0.06 });
+    playTone({
+      type: "square",
+      from: 660,
+      to: 880,
+      duration: 0.06,
+      volume: 0.06,
+    });
   },
   die() {
-    playTone({ type: "sawtooth", from: 240, to: 30, duration: 0.75, volume: 0.14 });
-    playTone({ type: "square", from: 120, to: 20, duration: 0.9, volume: 0.09, delay: 0.04 });
+    playTone({
+      type: "sawtooth",
+      from: 240,
+      to: 30,
+      duration: 0.75,
+      volume: 0.14,
+    });
+    playTone({
+      type: "square",
+      from: 120,
+      to: 20,
+      duration: 0.9,
+      volume: 0.09,
+      delay: 0.04,
+    });
   },
   levelUp() {
     [523, 659, 784, 1046].forEach((freq, i) => {
-      playTone({ type: "square", from: freq, to: freq, duration: 0.08, volume: 0.07, delay: i * 0.09 });
+      playTone({
+        type: "square",
+        from: freq,
+        to: freq,
+        duration: 0.08,
+        volume: 0.07,
+        delay: i * 0.09,
+      });
     });
   },
   click() {
-    playTone({ type: "square", from: 880, to: 880, duration: 0.05, volume: 0.06 });
+    playTone({
+      type: "square",
+      from: 880,
+      to: 880,
+      duration: 0.05,
+      volume: 0.06,
+    });
   },
   start() {
     [440, 660].forEach((freq, i) => {
-      playTone({ type: "square", from: freq, to: freq, duration: 0.07, volume: 0.07, delay: i * 0.08 });
+      playTone({
+        type: "square",
+        from: freq,
+        to: freq,
+        duration: 0.07,
+        volume: 0.07,
+        delay: i * 0.08,
+      });
     });
   },
 };
@@ -217,7 +266,13 @@ function angleInArc(a, start, span, margin) {
 }
 
 function drawText(text, x, y, size, options = {}) {
-  const { color = COLORS.text, align = "center", glow = 0, alpha = 1, weight = 700 } = options;
+  const {
+    color = COLORS.text,
+    align = "center",
+    glow = 0,
+    alpha = 1,
+    weight = 700,
+  } = options;
   c.save();
   c.font = `${weight} ${size}px ${FONT}`;
   c.textAlign = align;
@@ -244,7 +299,9 @@ function initAmbient() {
       z: randomBetween(0.4, DEPTH),
       drift: randomBetween(-0.25, 0.25),
       size: randomBetween(2, 5),
-      color: ["#ff2e88", "#00e5ff", "#b967ff", "#ff5136"][Math.floor(Math.random() * 4)],
+      color: ["#ff2e88", "#00e5ff", "#b967ff", "#ff5136"][
+        Math.floor(Math.random() * 4)
+      ],
     });
   }
 }
@@ -272,22 +329,67 @@ function drawAmbient() {
 }
 
 // ---------------------------------------------------------------------------
-// Tube rings (the moving wall texture)
+// Tube lines (the moving wall texture)
 // ---------------------------------------------------------------------------
+function drawTubeLines() {
+  const railCount = 16;
+  const dashSpacing = 1.65;
+  const dashLength = 0.85;
+  const dashCount = Math.ceil(DEPTH / dashSpacing);
 
-function drawTubeRings() {
-  const spacing = 1.5;
   c.save();
-  c.strokeStyle = "rgba(255,255,255,0.09)";
-  for (let i = 0; i < DEPTH / spacing; i++) {
-    const z = ((state.scroll + i * spacing) % DEPTH + DEPTH) % DEPTH;
-    if (z < 0.35) continue; // don't draw rings right at the camera
-    const r = R0 / (1 + z);
-    c.lineWidth = 1 + 1.5 * (r / R0);
+
+  // Longitudinal lines running from the vanishing point
+  // toward the outside of the tunnel.
+  c.lineWidth = 1;
+
+  for (let rail = 0; rail < railCount; rail++) {
+    const angle = (rail / railCount) * Math.PI * 2;
+
+    const far = project(angle, DEPTH);
+    const near = project(angle, 0.05);
+
+    c.strokeStyle = "rgba(90, 150, 190, 0.13)";
+
     c.beginPath();
-    c.arc(CX, CY, r, 0, Math.PI * 2);
+    c.moveTo(far.x, far.y);
+    c.lineTo(near.x, near.y);
     c.stroke();
   }
+
+  // Moving light streaks traveling toward the player.
+  // Each streak moves from the vanishing point outward.
+  c.lineCap = "round";
+
+  for (let rail = 0; rail < railCount; rail++) {
+    const angle = (rail / railCount) * Math.PI * 2;
+
+    for (let i = 0; i < dashCount; i++) {
+      // Offset each rail slightly so the streaks don't
+      // line up and look like another set of circular rings.
+      const z =
+        (((i * dashSpacing + rail * 0.43 - state.scroll) % DEPTH) + DEPTH) %
+        DEPTH;
+
+      const nearZ = Math.max(0, z - dashLength);
+
+      if (z - nearZ < 0.12) continue;
+
+      const far = project(angle, z);
+      const near = project(angle, nearZ);
+
+      const scale = near.r / R0;
+
+      c.strokeStyle = `rgba(125, 205, 255, ${0.12 + scale * 0.34})`;
+      c.lineWidth = 0.8 + scale * 1.1;
+
+      c.beginPath();
+      c.moveTo(far.x, far.y);
+      c.lineTo(near.x, near.y);
+      c.stroke();
+    }
+  }
+
   c.restore();
 }
 
@@ -331,7 +433,9 @@ function updateGates(dt) {
 
     // The gate just reached the ship
     if (previousZ > PLAYER_Z && gate.z <= PLAYER_Z) {
-      if (angleInArc(state.playerAngle, gate.start, gate.span, SHIP_HALF_ANGLE)) {
+      if (
+        angleInArc(state.playerAngle, gate.start, gate.span, SHIP_HALF_ANGLE)
+      ) {
         die(gate);
         return;
       }
@@ -450,7 +554,9 @@ function playerExplode() {
       size: randomBetween(3, 8),
       rotation: Math.random() * Math.PI,
       rotationSpeed: randomBetween(-6, 6),
-      color: [COLORS.player, COLORS.gate, COLORS.gateHot, "#ffffff"][Math.floor(Math.random() * 4)],
+      color: [COLORS.player, COLORS.gate, COLORS.gateHot, "#ffffff"][
+        Math.floor(Math.random() * 4)
+      ],
       life: 0,
       maxLife: randomBetween(0.5, 1.1),
     });
@@ -536,7 +642,12 @@ function hitMenuButton(x, y) {
 
 function hitSettingsButton(x, y) {
   for (const button of settingsButtons) {
-    if (x >= button.x && x <= button.x + button.w && y >= button.y && y <= button.y + button.h) {
+    if (
+      x >= button.x &&
+      x <= button.x + button.w &&
+      y >= button.y &&
+      y <= button.y + button.h
+    ) {
       return button;
     }
   }
@@ -791,7 +902,9 @@ function drawSettings() {
     c.fill();
     c.stroke();
     c.restore();
-    drawText(label, button.x + button.w / 2, button.y + button.h / 2 + 1, 24, { weight: 600 });
+    drawText(label, button.x + button.w / 2, button.y + button.h / 2 + 1, 24, {
+      weight: 600,
+    });
   }
 }
 
@@ -807,7 +920,10 @@ function roundRectPath(x, y, w, h, radius) {
 
 function drawHud() {
   drawText(`level ${state.level}`, CX, 58, 30, { glow: 10, weight: 700 });
-  drawText(`gates ${state.gatesRemaining}`, CX, 100, 24, { color: COLORS.textDim, weight: 600 });
+  drawText(`gates ${state.gatesRemaining}`, CX, 100, 24, {
+    color: COLORS.textDim,
+    weight: 600,
+  });
 }
 
 function drawSteeringButtons() {
@@ -826,7 +942,9 @@ function drawSteeringButtons() {
     c.globalAlpha = button.pressed ? 1 : 0.55;
     c.shadowColor = COLORS.button;
     c.shadowBlur = button.pressed ? 18 : 8;
-    c.fillStyle = button.pressed ? "rgba(255,177,61,0.22)" : "rgba(255,177,61,0.05)";
+    c.fillStyle = button.pressed
+      ? "rgba(255,177,61,0.22)"
+      : "rgba(255,177,61,0.05)";
     c.beginPath();
     c.arc(button.x, button.y, 46, 0, Math.PI * 2);
     c.fill();
@@ -900,7 +1018,10 @@ function render() {
 
   c.save();
   if (state.shake > 0.2) {
-    c.translate(randomBetween(-state.shake, state.shake), randomBetween(-state.shake, state.shake));
+    c.translate(
+      randomBetween(-state.shake, state.shake),
+      randomBetween(-state.shake, state.shake),
+    );
   }
 
   // Deep glow at the vanishing point
@@ -910,7 +1031,7 @@ function render() {
   c.fillStyle = vanishingGlow;
   c.fillRect(CX - 110, CY - 110, 220, 220);
 
-  drawTubeRings();
+  drawTubeLines();
   drawAmbient();
   drawGates();
 
@@ -935,7 +1056,14 @@ function render() {
   c.restore();
 
   // Subtle vignette
-  const vignette = c.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.72);
+  const vignette = c.createRadialGradient(
+    W / 2,
+    H / 2,
+    H * 0.35,
+    W / 2,
+    H / 2,
+    H * 0.72,
+  );
   vignette.addColorStop(0, "rgba(0,0,0,0)");
   vignette.addColorStop(1, "rgba(0,0,0,0.45)");
   c.fillStyle = vignette;
@@ -971,10 +1099,7 @@ function boot() {
 }
 
 if (document.fonts && document.fonts.load) {
-  document.fonts
-    .load('700 20px Rajdhani')
-    .then(boot)
-    .catch(boot);
+  document.fonts.load("700 20px Rajdhani").then(boot).catch(boot);
 } else {
   boot();
 }
